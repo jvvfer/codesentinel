@@ -1,0 +1,14 @@
+spring:
+  config:
+    import: optional:file:./secrets.properties
+
+server:
+  port: 8080
+  error:
+    include-message: always
+
+llm:
+  api-key: ${GEMINI_API_KEY:}
+  model: gemini-flash-latest
+  model-fast: gemini-flash-lite-latest
+  timeout-seconds: 40

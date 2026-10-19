@@ -1,0 +1,7 @@
+POST http://localhost:8080/api/analyze
+Content-Type: application/json
+
+{
+  "code": "public User find(String id) { String q = \"SELECT * FROM users WHERE id=\" + id; String password = \"admin12345\"; return db.run(q); }",
+  "verify": true
+}
