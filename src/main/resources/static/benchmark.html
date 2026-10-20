@@ -26,7 +26,7 @@
 <button id="run">Lancer le benchmark</button>
 
 <table>
-    <thead><tr><th>#</th><th>Échantillon</th><th>Détecté</th><th>Problèmes en trop</th><th>Total</th><th>Latence (s)</th><th>Score</th></tr></thead>
+    <thead><tr><th>#</th><th>Échantillon</th><th>Détecté</th><th>Problèmes en trop</th><th>Total</th><th>Latence (s)</th><th>Tokens</th><th>Score</th><th>Remarque</th></tr></thead>
     <tbody id="body"></tbody>
 </table>
 <h3>Résumé (à copier dans le rapport)</h3>
@@ -50,7 +50,7 @@
         const verify = $('verify').checked;
 
         const samples = await (await fetch('/api/benchmark/samples')).json();
-        let detectedCount = 0, expectCount = 0, falsePos = 0, extraTotal = 0, latSum = 0, done = 0;
+        let tokSum = 0, invalid = 0, detectedCount = 0, expectCount = 0, falsePos = 0, extraTotal = 0, latSum = 0, done = 0;
 
         for (const s of samples) {
             const tr = document.createElement('tr');
@@ -69,10 +69,11 @@
                 cell(tr, r.id); cell(tr, r.name);
                 cell(tr, r.detected ? 'oui' : 'non', r.detected ? 'ok' : 'ko');
                 cell(tr, r.extraFindings); cell(tr, r.totalFindings);
-                cell(tr, (r.latencyMs / 1000).toFixed(1)); cell(tr, r.score);
+                cell(tr, (r.latencyMs / 1000).toFixed(1)); cell(tr, r.tokens); cell(tr, r.score);
+                if (r.failedAgents.length) { cell(tr, 'réponse invalide : ' + r.failedAgents.join(', '), 'ko'); invalid++; }
                 if (r.expectsIssue) { expectCount++; if (r.detected) detectedCount++; extraTotal += r.extraFindings; }
                 else { falsePos = r.extraFindings; }
-                latSum += r.latencyMs; done++;
+                latSum += r.latencyMs; tokSum += r.tokens; done++;
             } catch (e) {
                 tr.replaceChildren();
                 cell(tr, s.id); cell(tr, s.name); cell(tr, 'erreur : ' + e.message, 'ko');
@@ -85,7 +86,9 @@
             'Détection : ' + detectedCount + '/' + expectCount + ' (' + rate + ' %)\n' +
             'Faux positifs sur le code sain : ' + falsePos + '\n' +
             'Problèmes en trop sur les codes défectueux : ' + extraTotal + '\n' +
-            'Latence moyenne : ' + (done ? (latSum / done / 1000).toFixed(1) : '-') + ' s par analyse';
+            'Analyses avec réponse invalide : ' + invalid + '\n' +
+            'Latence moyenne : ' + (done ? (latSum / done / 1000).toFixed(1) : '-') + ' s par analyse\n' +
+            'Tokens moyens : ' + (done ? Math.round(tokSum / done) : '-') + ' par analyse';
         $('run').disabled = false;
     };
 </script>

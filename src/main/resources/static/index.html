@@ -118,11 +118,16 @@
         score.textContent = r.score + '/100';
         score.style.color = r.score >= 80 ? '#166534' : r.score >= 50 ? '#ca8a04' : '#b91c1c';
         const badges = el('div', 'badges');
-        [r.model, r.latencyMs + ' ms', r.cached ? 'depuis le cache' : 'nouvel appel',
+        [r.model, r.latencyMs + ' ms', r.tokens + ' tokens', r.cached ? 'depuis le cache' : 'nouvel appel',
             r.verified ? 'vérifié' : 'non vérifié', r.findings.length + ' problème(s)']
             .forEach(t => badges.appendChild(el('span', '', t)));
         top.append(score, badges);
         box.appendChild(top);
+        if (r.failedAgents && r.failedAgents.length) {
+            box.appendChild(el('div', 'error',
+                "Analyse incomplète : réponse invalide de l'agent " + r.failedAgents.join(', ') +
+                ". Le score ne garantit pas l'absence de problème, relance l'analyse."));
+        }
 
         const tabs = el('div', 'row tabs');
         const bF = el('button', 'active', 'Problèmes');

@@ -15,6 +15,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -23,13 +24,19 @@ public class GeminiClient {
 
     private static final int MAX_ATTEMPTS = 3;
 
+    /** Model text plus the tokens Gemini billed for the call (prompt + output). */
+    public record Reply(String text, int tokens) {}
+
     private final RestClient http;
     private final String apiKey;
+    private final Double temperature;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public GeminiClient(@Value("${llm.api-key}") String apiKey,
-                        @Value("${llm.timeout-seconds}") int timeout) {
+                        @Value("${llm.timeout-seconds}") int timeout,
+                        @Value("${llm.temperature:#{null}}") Double temperature) {
         this.apiKey = apiKey;
+        this.temperature = temperature;
         var factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
         factory.setReadTimeout(Duration.ofSeconds(timeout));
@@ -39,7 +46,7 @@ public class GeminiClient {
                 .build();
     }
 
-    public String ask(String model, String system, String user) {
+    public Reply ask(String model, String system, String user) {
         if (apiKey == null || apiKey.isBlank()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "API key missing");
         }
@@ -49,9 +56,7 @@ public class GeminiClient {
                 "contents", List.of(Map.of(
                         "role", "user",
                         "parts", List.of(Map.of("text", user)))),
-                "generationConfig", Map.of(
-                        "responseMimeType", "application/json",
-                        "maxOutputTokens", 4000));
+                "generationConfig", generationConfig());
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
@@ -66,7 +71,8 @@ public class GeminiClient {
                 JsonNode res = mapper.readTree(raw);
                 String text = res.path("candidates").path(0).path("content")
                         .path("parts").path(0).path("text").asText("");
-                return text.replaceAll("(?s)^```(?:json)?\\s*|\\s*```$", "").trim();
+                int tokens = res.path("usageMetadata").path("totalTokenCount").asInt(0);
+                return new Reply(text.replaceAll("(?s)^```(?:json)?\\s*|\\s*```$", "").trim(), tokens);
 
             } catch (HttpClientErrorException.TooManyRequests e) {
                 if (attempt == MAX_ATTEMPTS) {
@@ -97,6 +103,14 @@ public class GeminiClient {
             }
         }
         throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "LLM unavailable");
+    }
+
+    private Map<String, Object> generationConfig() {
+        Map<String, Object> config = new HashMap<>();
+        config.put("responseMimeType", "application/json");
+        config.put("maxOutputTokens", 4000);
+        if (temperature != null) config.put("temperature", temperature); // otherwise the model default
+        return config;
     }
 
     private void pause(int attempt) {

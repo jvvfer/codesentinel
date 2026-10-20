@@ -12,3 +12,4 @@ llm:
   model: gemini-flash-latest
   model-fast: gemini-flash-lite-latest
   timeout-seconds: 60
+  # temperature: 0.2   # uncomment to override the model default

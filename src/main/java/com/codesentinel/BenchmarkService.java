@@ -13,7 +13,8 @@ public class BenchmarkService {
     public record Sample(int id, String name, String code, String expectedRegex) {}
 
     public record Result(int id, String name, boolean expectsIssue, boolean detected,
-                         int extraFindings, int totalFindings, long latencyMs, int score) {}
+                         int extraFindings, int totalFindings, long latencyMs, int score,
+                         List<String> failedAgents, int tokens) {}
 
     private static final List<Sample> SAMPLES = List.of(
             new Sample(1, "Injection SQL", """
@@ -95,6 +96,7 @@ public class BenchmarkService {
             detected = total == 0;   // control sample: nothing should be reported
             extra = total;
         }
-        return new Result(s.id(), s.name(), expects, detected, extra, total, r.latencyMs(), r.score());
+        return new Result(s.id(), s.name(), expects, detected, extra, total, r.latencyMs(), r.score(),
+                r.failedAgents(), r.tokens());
     }
 }

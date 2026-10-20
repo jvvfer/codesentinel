@@ -4,4 +4,5 @@ import java.util.List;
 
 public record AnalysisResponse(List<Finding> findings, String generatedTests,
                                int score, long latencyMs, boolean cached,
-                               String model, boolean verified) {}
+                               String model, boolean verified,
+                               List<String> failedAgents, int tokens) {}

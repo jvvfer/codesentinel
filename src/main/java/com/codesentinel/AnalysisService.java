@@ -37,39 +37,63 @@ public class AnalysisService {
         AnalysisResponse hit = cache.get(key);
         if (hit != null) {
             return new AnalysisResponse(hit.findings(), hit.generatedTests(), hit.score(),
-                    0, true, m, hit.verified());
+                    0, true, m, hit.verified(), hit.failedAgents(), 0);
         }
 
         long t0 = System.currentTimeMillis();
 
+        int[] tokens = {0};
+        List<String> failed = new ArrayList<>();
         List<Finding> all = new ArrayList<>();
-        all.addAll(parse(llm.ask(m, Prompts.SECURITY, safe), "security"));
-        all.addAll(parse(llm.ask(m, Prompts.QUALITY, safe), "quality"));
-        String generatedTests = extractTests(llm.ask(m, Prompts.TESTS, safe));
+        addOrFail(all, parse(ask(m, Prompts.SECURITY, safe, tokens), "security"), "security", failed);
+        addOrFail(all, parse(ask(m, Prompts.QUALITY, safe, tokens), "quality"), "quality", failed);
+        String generatedTests = extractTests(ask(m, Prompts.TESTS, safe, tokens));
+        if (generatedTests == null) {
+            failed.add("tests");
+            generatedTests = "";
+        }
 
         List<Finding> result = all;
         boolean wasVerified = false;
         if (verify && !all.isEmpty()) {
             try {
                 String payload = "CODE:\n" + safe + "\n\nFINDINGS:\n" + mapper.writeValueAsString(all);
-                result = parse(llm.ask(m, Prompts.VERIFIER, payload), "verified");
-                wasVerified = true;
+                List<Finding> filtered = parse(ask(m, Prompts.VERIFIER, payload, tokens), "verified");
+                if (filtered == null) {
+                    failed.add("verifier"); // keep the unverified list rather than an empty one
+                } else {
+                    result = filtered;
+                    wasVerified = true;
+                }
             } catch (Exception e) {
                 result = all; // keep the unverified list if the verifier fails
             }
         }
 
         AnalysisResponse res = new AnalysisResponse(result, generatedTests, computeScore(result),
-                System.currentTimeMillis() - t0, false, m, wasVerified);
-        cache.put(key, res);
+                System.currentTimeMillis() - t0, false, m, wasVerified, List.copyOf(failed), tokens[0]);
+        if (failed.isEmpty()) cache.put(key, res); // a partial result must not be served again
+
         return res;
     }
 
+    private String ask(String model, String system, String user, int[] tokens) {
+        GeminiClient.Reply reply = llm.ask(model, system, user);
+        tokens[0] += reply.tokens();
+        return reply.text();
+    }
+
+    private void addOrFail(List<Finding> all, List<Finding> found, String agent, List<String> failed) {
+        if (found == null) failed.add(agent);
+        else all.addAll(found);
+    }
+
+    /** Returns null when the model output is not the expected JSON, so a failure never looks like clean code. */
     private List<Finding> parse(String json, String agent) {
         try {
             JsonNode arr = mapper.readTree(json).get("findings");
+            if (arr == null || !arr.isArray()) return null;
             List<Finding> out = new ArrayList<>();
-            if (arr == null || !arr.isArray()) return out;
             for (JsonNode n : arr) {
                 out.add(new Finding(
                         agent,
@@ -82,15 +106,16 @@ public class AnalysisService {
             }
             return out;
         } catch (Exception e) {
-            return List.of(); // invalid output is never displayed
+            return null; // invalid output is never displayed
         }
     }
 
     private String extractTests(String json) {
         try {
-            return mapper.readTree(json).path("tests").asText("");
+            JsonNode tests = mapper.readTree(json).get("tests");
+            return tests == null || !tests.isTextual() ? null : tests.asText();
         } catch (Exception e) {
-            return "";
+            return null;
         }
     }
 
