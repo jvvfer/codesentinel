@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CodeSentinel</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background: #f4f5f7; color: #1f2933; }
+        header { background: #1f2933; color: #fff; padding: 14px 24px; }
+        header h1 { margin: 0; font-size: 20px; }
+        header span { color: #9aa5b1; font-size: 13px; }
+        main { max-width: 1100px; margin: 20px auto; padding: 0 16px; display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+        @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+        .card { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+        textarea { width: 100%; height: 340px; font-family: Consolas, monospace; font-size: 13px; padding: 10px;
+            border: 1px solid #cbd2d9; border-radius: 6px; resize: vertical; }
+        .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+        select, button { padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd2d9; font-size: 14px; }
+        button.primary { background: #2563eb; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+        button.primary:disabled { background: #93b4f5; cursor: wait; }
+        button.ghost { background: #fff; cursor: pointer; }
+        #score { font-size: 42px; font-weight: 700; }
+        .badges span { display: inline-block; background: #e4e7eb; border-radius: 12px; padding: 2px 10px; font-size: 12px; margin-right: 6px; }
+        .finding { border-left: 5px solid #9aa5b1; padding: 8px 12px; margin: 10px 0; background: #fafbfc; border-radius: 4px; }
+        .critical { border-color: #b91c1c; } .high { border-color: #ea580c; }
+        .medium { border-color: #ca8a04; } .low { border-color: #2563eb; }
+        .tag { font-size: 11px; font-weight: 700; text-transform: uppercase; }
+        .finding h4 { margin: 4px 0; } .finding p { margin: 4px 0; font-size: 14px; }
+        .fix { color: #166534; font-size: 14px; }
+        .tabs button { margin-right: 6px; cursor: pointer; background: #e4e7eb; border: none; }
+        .tabs button.active { background: #1f2933; color: #fff; }
+        pre { background: #1f2933; color: #e4e7eb; padding: 12px; border-radius: 6px; overflow: auto; font-size: 12px; max-height: 420px; }
+        .error { background: #fee2e2; color: #991b1b; padding: 10px; border-radius: 6px; }
+        .muted { color: #7b8794; font-size: 14px; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>CodeSentinel <span>Revue de code assistée par IA</span></h1>
+</header>
+
+<main>
+    <section class="card">
+        <h3 style="margin-top:0">Code à analyser</h3>
+        <textarea id="code" placeholder="Colle ton code ici (20 000 caractères max)"></textarea>
+        <div class="row">
+            <select id="model">
+                <option value="">Modèle par défaut</option>
+                <option value="gemini-flash-latest">gemini-flash-latest</option>
+                <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
+                <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+            </select>
+            <label><input type="checkbox" id="verify" checked> Vérificateur (réduit les faux positifs)</label>
+        </div>
+        <div class="row">
+            <button class="primary" id="go">Analyser</button>
+            <button class="ghost" id="example">Charger un exemple vulnérable</button>
+        </div>
+    </section>
+
+    <section class="card">
+        <h3 style="margin-top:0">Résultat</h3>
+        <div id="out" class="muted">Lance une analyse pour voir les résultats.</div>
+    </section>
+</main>
+
+<script>
+    const $ = id => document.getElementById(id);
+    const EXAMPLE = `public User find(String id) {
+    String q = "SELECT * FROM users WHERE id=" + id;
+    String password = "admin12345";
+    return db.run(q);
+}`;
+
+    $('example').onclick = () => { $('code').value = EXAMPLE; };
+
+    $('go').onclick = async () => {
+        const code = $('code').value.trim();
+        if (!code) { show(el('div', 'error', 'Colle du code avant de lancer l\'analyse.')); return; }
+        $('go').disabled = true;
+        $('go').textContent = 'Analyse en cours…';
+        show(el('div', 'muted', 'Analyse en cours, cela peut prendre jusqu\'à une minute…'));
+        try {
+            const res = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code, model: $('model').value || null, verify: $('verify').checked })
+            });
+            if (!res.ok) {
+                let msg = 'Erreur ' + res.status;
+                try { const e = await res.json(); if (e.message) msg += ' : ' + e.message; } catch (_) {}
+                throw new Error(msg);
+            }
+            render(await res.json());
+        } catch (e) {
+            show(el('div', 'error', e.message));
+        } finally {
+            $('go').disabled = false;
+            $('go').textContent = 'Analyser';
+        }
+    };
+
+    function el(tag, cls, text) {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text !== undefined) n.textContent = text;
+        return n;
+    }
+    function show(node) { $('out').replaceChildren(node); }
+
+    function render(r) {
+        const box = el('div');
+
+        const top = el('div', 'row');
+        const score = el('div', '', '');
+        score.id = 'score';
+        score.textContent = r.score + '/100';
+        score.style.color = r.score >= 80 ? '#166534' : r.score >= 50 ? '#ca8a04' : '#b91c1c';
+        const badges = el('div', 'badges');
+        [r.model, r.latencyMs + ' ms', r.cached ? 'depuis le cache' : 'nouvel appel',
+            r.verified ? 'vérifié' : 'non vérifié', r.findings.length + ' problème(s)']
+            .forEach(t => badges.appendChild(el('span', '', t)));
+        top.append(score, badges);
+        box.appendChild(top);
+
+        const tabs = el('div', 'row tabs');
+        const bF = el('button', 'active', 'Problèmes');
+        const bT = el('button', '', 'Tests générés');
+        tabs.append(bF, bT);
+        box.appendChild(tabs);
+
+        const pF = el('div');
+        if (r.findings.length === 0) pF.appendChild(el('p', 'muted', 'Aucun problème détecté.'));
+        r.findings.forEach(f => {
+            const d = el('div', 'finding ' + f.severity);
+            d.appendChild(el('div', 'tag', f.severity + ' · ' + f.type + (f.line ? ' · ligne ' + f.line : '')));
+            d.appendChild(el('h4', '', f.title));
+            d.appendChild(el('p', '', f.explanation));
+            d.appendChild(el('p', 'fix', 'Correction : ' + f.fix));
+            pF.appendChild(d);
+        });
+
+        const pT = el('div');
+        pT.style.display = 'none';
+        const pre = el('pre', '', r.generatedTests || 'Aucun test généré.');
+        const copy = el('button', 'ghost', 'Copier');
+        copy.onclick = () => navigator.clipboard.writeText(r.generatedTests || '');
+        pT.append(copy, pre);
+
+        bF.onclick = () => { pF.style.display = ''; pT.style.display = 'none'; bF.className = 'active'; bT.className = ''; };
+        bT.onclick = () => { pT.style.display = ''; pF.style.display = 'none'; bT.className = 'active'; bF.className = ''; };
+
+        box.append(pF, pT);
+        show(box);
+    }
+</script>
+</body>
+</html>

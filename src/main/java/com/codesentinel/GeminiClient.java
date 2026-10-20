@@ -9,8 +9,9 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
@@ -19,6 +20,8 @@ import java.util.Map;
 
 @Component
 public class GeminiClient {
+
+    private static final int MAX_ATTEMPTS = 3;
 
     private final RestClient http;
     private final String apiKey;
@@ -50,7 +53,7 @@ public class GeminiClient {
                         "responseMimeType", "application/json",
                         "maxOutputTokens", 4000));
 
-        for (int attempt = 0; attempt < 3; attempt++) {
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 String raw = http.post()
                         .uri("/v1beta/models/{m}:generateContent", model)
@@ -66,20 +69,41 @@ public class GeminiClient {
                 return text.replaceAll("(?s)^```(?:json)?\\s*|\\s*```$", "").trim();
 
             } catch (HttpClientErrorException.TooManyRequests e) {
-                if (attempt == 2) {
-                    throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Quota exceeded");
+                if (attempt == MAX_ATTEMPTS) {
+                    throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                            "Quota exceeded, wait a minute");
                 }
-                try {
-                    Thread.sleep((long) Math.pow(2, attempt) * 6000);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                pause(attempt);
+            } catch (HttpServerErrorException e) {
+                // Gemini 500 / 503 / 504: model overloaded, usually temporary
+                if (attempt == MAX_ATTEMPTS) {
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                            "Model overloaded, try again in a few minutes or switch model");
                 }
-            } catch (ResourceAccessException e) {
-                throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "LLM timeout");
+                pause(attempt);
+            } catch (HttpClientErrorException e) {
+                // 400 / 403 / 404: bad key, bad model name, bad request
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                        "Gemini rejected the request (" + e.getStatusCode().value()
+                                + "), check the key and the model name");
             } catch (JsonProcessingException e) {
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid LLM response");
+            } catch (RestClientException e) {
+                // timeouts and network errors
+                if (attempt == MAX_ATTEMPTS) {
+                    throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "LLM timeout");
+                }
+                pause(attempt);
             }
         }
-        throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Quota exceeded");
+        throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "LLM unavailable");
+    }
+
+    private void pause(int attempt) {
+        try {
+            Thread.sleep(5000L * attempt);   // 5 s, then 10 s
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

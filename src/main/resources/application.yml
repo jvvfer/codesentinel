@@ -11,4 +11,4 @@ llm:
   api-key: ${GEMINI_API_KEY:}
   model: gemini-flash-latest
   model-fast: gemini-flash-lite-latest
-  timeout-seconds: 40
+  timeout-seconds: 60

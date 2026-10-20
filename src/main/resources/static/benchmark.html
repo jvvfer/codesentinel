@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSentinel - Benchmark</title>
+    <style>
+        body { font-family: Segoe UI, Arial, sans-serif; max-width: 960px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+        table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+        th, td { border: 1px solid #cbd2d9; padding: 8px; text-align: left; font-size: 14px; }
+        th { background: #e4e7eb; }
+        .ok { color: #166534; font-weight: 600; } .ko { color: #b91c1c; font-weight: 600; }
+        select, button { padding: 8px 12px; font-size: 14px; }
+        pre { background: #f4f5f7; padding: 12px; border-radius: 6px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+<h2>Benchmark CodeSentinel</h2>
+<p>6 échantillons avec défauts connus (dont 1 code sain). Les appels se font un par un, compte environ 5 minutes.</p>
+<select id="model">
+    <option value="">Modèle par défaut</option>
+    <option value="gemini-flash-latest">gemini-flash-latest</option>
+    <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
+    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+</select>
+<label><input type="checkbox" id="verify" checked> Vérificateur</label>
+<button id="run">Lancer le benchmark</button>
+
+<table>
+    <thead><tr><th>#</th><th>Échantillon</th><th>Détecté</th><th>Problèmes en trop</th><th>Total</th><th>Latence (s)</th><th>Score</th></tr></thead>
+    <tbody id="body"></tbody>
+</table>
+<h3>Résumé (à copier dans le rapport)</h3>
+<pre id="summary">-</pre>
+
+<script>
+    const $ = id => document.getElementById(id);
+
+    function cell(tr, text, cls) {
+        const td = document.createElement('td');
+        td.textContent = text;
+        if (cls) td.className = cls;
+        tr.appendChild(td);
+    }
+
+    $('run').onclick = async () => {
+        $('run').disabled = true;
+        $('body').replaceChildren();
+        $('summary').textContent = 'En cours…';
+        const model = $('model').value;
+        const verify = $('verify').checked;
+
+        const samples = await (await fetch('/api/benchmark/samples')).json();
+        let detectedCount = 0, expectCount = 0, falsePos = 0, extraTotal = 0, latSum = 0, done = 0;
+
+        for (const s of samples) {
+            const tr = document.createElement('tr');
+            cell(tr, s.id); cell(tr, s.name); cell(tr, 'en cours…');
+            $('body').appendChild(tr);
+            try {
+                const url = '/api/benchmark/run?id=' + s.id + '&verify=' + verify + (model ? '&model=' + encodeURIComponent(model) : '');
+                const res = await fetch(url);
+                if (!res.ok) {
+                    let m = 'HTTP ' + res.status;
+                    try { const e = await res.json(); if (e.message) m += ' - ' + e.message; } catch (_) {}
+                    throw new Error(m);
+                }
+                const r = await res.json();
+                tr.replaceChildren();
+                cell(tr, r.id); cell(tr, r.name);
+                cell(tr, r.detected ? 'oui' : 'non', r.detected ? 'ok' : 'ko');
+                cell(tr, r.extraFindings); cell(tr, r.totalFindings);
+                cell(tr, (r.latencyMs / 1000).toFixed(1)); cell(tr, r.score);
+                if (r.expectsIssue) { expectCount++; if (r.detected) detectedCount++; extraTotal += r.extraFindings; }
+                else { falsePos = r.extraFindings; }
+                latSum += r.latencyMs; done++;
+            } catch (e) {
+                tr.replaceChildren();
+                cell(tr, s.id); cell(tr, s.name); cell(tr, 'erreur : ' + e.message, 'ko');
+            }
+        }
+
+        const rate = expectCount ? Math.round(100 * detectedCount / expectCount) : 0;
+        $('summary').textContent =
+            'Modèle : ' + (model || 'par défaut') + ' | vérificateur : ' + (verify ? 'oui' : 'non') + '\n' +
+            'Détection : ' + detectedCount + '/' + expectCount + ' (' + rate + ' %)\n' +
+            'Faux positifs sur le code sain : ' + falsePos + '\n' +
+            'Problèmes en trop sur les codes défectueux : ' + extraTotal + '\n' +
+            'Latence moyenne : ' + (done ? (latSum / done / 1000).toFixed(1) : '-') + ' s par analyse';
+        $('run').disabled = false;
+    };
+</script>
+</body>
+</html>
