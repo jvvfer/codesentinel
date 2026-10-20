@@ -33,4 +33,28 @@ class SecretMaskerTest {
         String code = "public int add(int a, int b) { return Math.addExact(a, b); }";
         assertEquals(code, masker.mask(code));
     }
+
+    @Test
+    void randomForestCatchesSecretsTheRegexMisses() {
+        String code = "String mdp = \"Esprit2026\";";
+        assertEquals(code, new SecretMasker(null).mask(code), "regex alone: mdp is not a known name");
+        assertEquals("String mdp = \"[MASKED_SECRET]\";", masker.mask(code));
+    }
+
+    @Test
+    void randomForestKeepsTheVariableName() {
+        String out = masker.mask("private static final String dbPass = \"Azerty2024!\";");
+        assertTrue(out.contains("dbPass = \"[MASKED_SECRET]\""));
+        assertFalse(out.contains("Azerty2024"));
+    }
+
+    @Test
+    void ordinaryStringLiteralsAreNotMasked() {
+        String code = """
+                String q = "SELECT * FROM users WHERE id=" + id;
+                String passwordLabel = "Mot de passe";
+                String encoding = "UTF-8";
+                """;
+        assertEquals(code, masker.mask(code));
+    }
 }
